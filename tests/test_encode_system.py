@@ -1,5 +1,6 @@
 import unittest
 
+from app import OUTPUT_DIR, output_path
 from encode_system import EncodeConfig, build_ffmpeg_command, estimate_encode_minutes, expected_size_mb, safe_output_name
 
 
@@ -26,6 +27,11 @@ class EncodeSystemTests(unittest.TestCase):
     def test_safe_output_name(self):
         self.assertEqual(safe_output_name("../../bad?.mp4"), "bad.mp4")
         self.assertEqual(safe_output_name(""), "encoded.mp4")
+
+    def test_output_path_stays_in_outputs(self):
+        target = output_path("../../bad?.mp4")
+        self.assertTrue(str(target).startswith(str(OUTPUT_DIR)))
+        self.assertEqual(target.name, "bad.mp4")
 
 
 if __name__ == "__main__":

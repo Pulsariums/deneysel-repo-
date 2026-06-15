@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import mimetypes
+import re
 import subprocess
 import uuid
 from http import HTTPStatus
@@ -16,6 +16,7 @@ from encode_system import EncodeConfig, build_ffmpeg_command, estimate_encode_mi
 ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = ROOT / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
+SAFE_OUTPUT_RE = re.compile(r"^[A-Za-z0-9._-]+\.mp4$")
 
 jobs: Dict[str, Dict[str, str]] = {}
 jobs_lock = Lock()
@@ -114,6 +115,8 @@ def to_config(data: dict) -> EncodeConfig:
 
 def output_path(output_name: str) -> Path:
     safe_name = safe_output_name(output_name)
+    if not SAFE_OUTPUT_RE.fullmatch(safe_name):
+        raise ValueError("Invalid output filename")
     target = (OUTPUT_DIR / safe_name).resolve()
     if not target.is_relative_to(OUTPUT_DIR):
         raise ValueError("Invalid output path")
@@ -164,7 +167,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/outputs/"):
             requested = unquote(self.path[len("/outputs/") :])
             file_name = Path(requested).name
-            if file_name != safe_output_name(file_name) or not file_name.lower().endswith(".mp4"):
+            if file_name != safe_output_name(file_name) or not SAFE_OUTPUT_RE.fullmatch(file_name):
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             target = output_path(file_name)
@@ -173,7 +176,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             content = target.read_bytes()
             self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", mimetypes.guess_type(str(target))[0] or "application/octet-stream")
+            self.send_header("Content-Type", "video/mp4")
             self.send_header("Content-Length", str(len(content)))
             self.end_headers()
             self.wfile.write(content)

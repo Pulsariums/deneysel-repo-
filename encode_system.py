@@ -21,6 +21,9 @@ RUNNER_BASE_FPS = {
     "private": 22.0,
 }
 
+ASSUMED_SOURCE_FPS = 30
+DEFAULT_EXTENSION = ".mp4"
+
 RESOLUTION_SCALE = {
     "source": None,
     "1080p": "1920:1080",
@@ -49,7 +52,7 @@ def estimate_encode_minutes(duration_minutes: float, runner_type: str, preset: s
     base_fps = RUNNER_BASE_FPS.get(runner_type, RUNNER_BASE_FPS["private"])
     speed_multiplier = PRESET_SPEED.get(preset, PRESET_SPEED["medium"])
     encode_fps = base_fps * speed_multiplier
-    total_frames = max(duration_minutes, 0.0) * 60 * 30
+    total_frames = max(duration_minutes, 0.0) * 60 * ASSUMED_SOURCE_FPS
     seconds = total_frames / encode_fps if encode_fps else 0
     return round(seconds / 60, 2)
 
@@ -66,7 +69,8 @@ def expected_size_mb(
     elif mode == "crf_cap":
         video_mbps = 2.5
     else:
-        # crude estimate for CRF mode to give users quick intuition.
+        # Coarse CRF estimate model around x264 defaults:
+        # CRF 18 ≈ high quality / larger size, each CRF step lowers expected bitrate.
         video_mbps = max(0.8, 5.0 - (crf - 18) * 0.3)
     total_mbps = video_mbps + (audio_bitrate_k / 1000.0)
     total_megabits = total_mbps * max(duration_minutes, 0.0) * 60
@@ -112,7 +116,7 @@ def safe_output_name(raw_name: str) -> str:
     cleaned = "".join(ch for ch in base_name if ch.isalnum() or ch in ("-", "_", "."))
     cleaned = cleaned.lstrip(".")
     if not cleaned:
-        cleaned = "encoded.mp4"
-    if not cleaned.lower().endswith(".mp4"):
-        cleaned += ".mp4"
+        cleaned = f"encoded{DEFAULT_EXTENSION}"
+    if not cleaned.lower().endswith(DEFAULT_EXTENSION):
+        cleaned += DEFAULT_EXTENSION
     return Path(cleaned).name

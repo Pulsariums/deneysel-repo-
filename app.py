@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import subprocess
 import uuid
 from http import HTTPStatus
@@ -8,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 from typing import Dict
+from urllib.parse import unquote
 
 from encode_system import EncodeConfig, build_ffmpeg_command, estimate_encode_minutes, expected_size_mb, safe_output_name
 
@@ -96,7 +98,7 @@ def to_config(data: dict) -> EncodeConfig:
     out_name = safe_output_name(data.get("output_file", "encoded.mp4"))
     return EncodeConfig(
         input_source=str(data.get("input_source", "")).strip(),
-        output_file=str((OUTPUT_DIR / out_name).resolve()),
+        output_file=out_name,
         duration_minutes=float(data.get("duration_minutes", 20)),
         runner_type=str(data.get("runner_type", "public")),
         preset=str(data.get("preset", "medium")),
@@ -110,8 +112,18 @@ def to_config(data: dict) -> EncodeConfig:
     )
 
 
+def output_path(output_name: str) -> Path:
+    safe_name = safe_output_name(output_name)
+    target = (OUTPUT_DIR / safe_name).resolve()
+    if not target.is_relative_to(OUTPUT_DIR):
+        raise ValueError("Invalid output path")
+    return target
+
+
 def run_job(job_id: str, config: EncodeConfig) -> None:
     try:
+        target_output = output_path(config.output_file)
+        config.output_file = str(target_output)
         cmd1 = build_ffmpeg_command(config, pass_no=1)
         cmd2 = build_ffmpeg_command(config, pass_no=2) if config.mode == "two_pass" else None
         with jobs_lock:
@@ -123,9 +135,9 @@ def run_job(job_id: str, config: EncodeConfig) -> None:
             subprocess.run(cmd1, check=True)
         with jobs_lock:
             jobs[job_id]["status"] = "completed"
-            jobs[job_id]["download_url"] = f"/outputs/{Path(config.output_file).name}"
-            jobs[job_id]["preview_url"] = f"/outputs/{Path(config.output_file).name}"
-    except Exception as exc:  # noqa: BLE001
+            jobs[job_id]["download_url"] = f"/outputs/{target_output.name}"
+            jobs[job_id]["preview_url"] = f"/outputs/{target_output.name}"
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError, ValueError) as exc:
         with jobs_lock:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(exc)
@@ -150,13 +162,18 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         if self.path.startswith("/outputs/"):
-            target = (ROOT / self.path.lstrip("/")).resolve()
-            if not str(target).startswith(str(OUTPUT_DIR)) or not target.is_file():
+            requested = unquote(self.path[len("/outputs/") :])
+            file_name = Path(requested).name
+            if file_name != safe_output_name(file_name) or not file_name.lower().endswith(".mp4"):
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            target = output_path(file_name)
+            if not target.is_file():
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             content = target.read_bytes()
             self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Type", mimetypes.guess_type(str(target))[0] or "application/octet-stream")
             self.send_header("Content-Length", str(len(content)))
             self.end_headers()
             self.wfile.write(content)
@@ -174,13 +191,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length", "0"))
-        payload = json.loads(self.rfile.read(length) or b"{}")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+        except json.JSONDecodeError:
+            self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid json"})
+            return
         config = to_config(payload)
         if not config.input_source:
             self._json(HTTPStatus.BAD_REQUEST, {"error": "input_source is required"})
             return
         if self.path == "/api/plan":
-            cmd = build_ffmpeg_command(config)
+            planned = EncodeConfig(**{**config.__dict__, "output_file": str(output_path(config.output_file))})
+            cmd = build_ffmpeg_command(planned)
             self._json(
                 HTTPStatus.OK,
                 {

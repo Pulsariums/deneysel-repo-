@@ -160,12 +160,12 @@ jobs:
           )
 
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-              summary.write("## Encode Plan\\n")
-              summary.write(f"- Input: `{config.input_source}`\\n")
-              summary.write(f"- Resolution: `{config.resolution}`\\n")
-              summary.write(f"- Mode: `{config.mode}`\\n")
-              summary.write(f"- Estimated encode time (min): `{eta}`\\n")
-              summary.write(f"- Estimated output size (MB): `{expected_mb}`\\n")
+              summary.write("## Encode Plan\n")
+              summary.write(f"- Input: `{config.input_source}`\n")
+              summary.write(f"- Resolution: `{config.resolution}`\n")
+              summary.write(f"- Mode: `{config.mode}`\n")
+              summary.write(f"- Estimated encode time (min): `{eta}`\n")
+              summary.write(f"- Estimated output size (MB): `{expected_mb}`\n")
 
           cmd1 = build_ffmpeg_command(config, pass_no=1)
           if config.mode == "two_pass":

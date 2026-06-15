@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +18,7 @@ ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = ROOT / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 SAFE_OUTPUT_RE = re.compile(r"^[A-Za-z0-9._-]+\.mp4$")
+FFMPEG_TIME_RE = re.compile(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)")
 
 jobs: Dict[str, Dict[str, str]] = {}
 jobs_lock = Lock()
@@ -124,25 +126,91 @@ def output_path(output_name: str) -> Path:
     return target
 
 
+def ffmpeg_time_seconds(line: str) -> float | None:
+    match = FFMPEG_TIME_RE.search(line)
+    if not match:
+        return None
+    hours, minutes, seconds = match.groups()
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def update_progress(job_id: str, started_at: float, total_seconds: float, pass_ratio: float) -> None:
+    elapsed = max(time.monotonic() - started_at, 0.0)
+    progress = max(0.0, min(pass_ratio, 1.0))
+    if progress > 0:
+        estimated_total_seconds = elapsed / progress
+        remaining = max(estimated_total_seconds - elapsed, 0.0)
+    else:
+        remaining = max(total_seconds, 0.0)
+    with jobs_lock:
+        jobs[job_id]["progress_percent"] = round(progress * 100, 2)
+        jobs[job_id]["elapsed_seconds"] = round(elapsed, 1)
+        jobs[job_id]["remaining_seconds"] = round(remaining, 1)
+
+
+def run_with_progress(
+    job_id: str,
+    cmd: list[str],
+    started_at: float,
+    duration_seconds: float,
+    pass_no: int,
+    total_passes: int,
+) -> None:
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    if process.stderr is None:
+        process.wait()
+        if process.returncode != 0:
+            raise subprocess.CalledProcessError(process.returncode, cmd)
+        return
+
+    base_ratio = (pass_no - 1) / total_passes
+    pass_span = 1.0 / total_passes
+    for line in process.stderr:
+        encoded_seconds = ffmpeg_time_seconds(line)
+        if encoded_seconds is None:
+            continue
+        pass_progress = 1.0 if duration_seconds <= 0 else min(max(encoded_seconds / duration_seconds, 0.0), 1.0)
+        update_progress(job_id, started_at, duration_seconds, base_ratio + (pass_progress * pass_span))
+
+    return_code = process.wait()
+    if return_code != 0:
+        raise subprocess.CalledProcessError(return_code, cmd)
+    update_progress(job_id, started_at, duration_seconds, base_ratio + pass_span)
+
+
 def run_job(job_id: str, config: EncodeConfig) -> None:
     try:
         target_output = output_path(config.output_file)
         config.output_file = str(target_output)
+        duration_seconds = max(config.duration_minutes, 0.0) * 60.0
+        started_at = time.monotonic()
         cmd1 = build_ffmpeg_command(config, pass_no=1)
         cmd2 = build_ffmpeg_command(config, pass_no=2) if config.mode == "two_pass" else None
         with jobs_lock:
             jobs[job_id]["command_pass_1"] = cmd1
             if cmd2 is not None:
                 jobs[job_id]["command_pass_2"] = cmd2
+                jobs[job_id]["total_passes"] = 2
+            else:
+                jobs[job_id]["total_passes"] = 1
         if config.mode == "two_pass":
             if cmd2 is None:
                 raise ValueError("second pass command missing")
-            subprocess.run(cmd1, check=True)
-            subprocess.run(cmd2, check=True)
+            run_with_progress(job_id, cmd1, started_at, duration_seconds, pass_no=1, total_passes=2)
+            run_with_progress(job_id, cmd2, started_at, duration_seconds, pass_no=2, total_passes=2)
         else:
-            subprocess.run(cmd1, check=True)
+            run_with_progress(job_id, cmd1, started_at, duration_seconds, pass_no=1, total_passes=1)
         with jobs_lock:
             jobs[job_id]["status"] = "completed"
+            jobs[job_id]["progress_percent"] = 100.0
+            jobs[job_id]["remaining_seconds"] = 0.0
+            jobs[job_id]["elapsed_seconds"] = round(max(time.monotonic() - started_at, 0.0), 1)
             jobs[job_id]["download_url"] = f"/api/output/{job_id}"
             jobs[job_id]["preview_url"] = f"/api/output/{job_id}"
             jobs[job_id]["output_abs"] = str(target_output)
@@ -233,10 +301,31 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/run":
             job_id = str(uuid.uuid4())
+            expected_output = expected_size_mb(
+                config.duration_minutes,
+                config.mode,
+                config.target_video_bitrate_mbps,
+                config.audio_bitrate_k,
+                config.crf,
+            )
             with jobs_lock:
-                jobs[job_id] = {"status": "running", "job_id": job_id, "output_file": str(Path(config.output_file).name)}
+                jobs[job_id] = {
+                    "status": "running",
+                    "job_id": job_id,
+                    "output_file": str(Path(config.output_file).name),
+                    "input_source": config.input_source,
+                    "resolution": config.resolution,
+                    "runner_type": config.runner_type,
+                    "preset": config.preset,
+                    "mode": config.mode,
+                    "expected_output_mb": expected_output,
+                    "progress_percent": 0.0,
+                    "elapsed_seconds": 0.0,
+                    "remaining_seconds": max(config.duration_minutes, 0.0) * 60.0,
+                }
+                response = dict(jobs[job_id])
             Thread(target=run_job, args=(job_id, config), daemon=True).start()
-            self._json(HTTPStatus.ACCEPTED, {"job_id": job_id, "status": "running"})
+            self._json(HTTPStatus.ACCEPTED, response)
             return
         self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 

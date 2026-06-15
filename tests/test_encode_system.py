@@ -1,6 +1,6 @@
 import unittest
 
-from app import OUTPUT_DIR, output_path
+from app import OUTPUT_DIR, ffmpeg_time_seconds, output_path
 from encode_system import EncodeConfig, build_ffmpeg_command, estimate_encode_minutes, expected_size_mb, safe_output_name
 
 
@@ -34,6 +34,11 @@ class EncodeSystemTests(unittest.TestCase):
         target = output_path("../../bad?.mp4")
         self.assertTrue(str(target).startswith(str(OUTPUT_DIR)))
         self.assertEqual(target.name, "bad.mp4")
+
+    def test_ffmpeg_time_seconds_parser(self):
+        line = "frame=100 fps=24.0 q=23.0 size=1024kB time=00:01:30.50 bitrate=93.2kbits/s"
+        self.assertEqual(ffmpeg_time_seconds(line), 90.5)
+        self.assertIsNone(ffmpeg_time_seconds("no time marker here"))
 
 
 if __name__ == "__main__":

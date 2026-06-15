@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
+from urllib.parse import urlparse
 
 
 PRESET_SPEED = {
@@ -23,6 +24,7 @@ RUNNER_BASE_FPS = {
 
 ASSUMED_SOURCE_FPS = 30
 DEFAULT_EXTENSION = ".mp4"
+DEFAULT_HTTP_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
 
 RESOLUTION_SCALE = {
     "source": None,
@@ -78,7 +80,17 @@ def expected_size_mb(
 
 
 def build_ffmpeg_command(config: EncodeConfig, pass_no: int | None = None, null_target: str = "/dev/null") -> List[str]:
-    args: List[str] = ["ffmpeg", "-y", "-i", config.input_source, "-c:v", "libx264", "-preset", config.preset]
+    input_source = config.input_source.strip()
+    parsed_source = urlparse(input_source)
+    args: List[str] = ["ffmpeg", "-y"]
+    if parsed_source.scheme in ("http", "https") and parsed_source.netloc:
+        args += [
+            "-user_agent",
+            DEFAULT_HTTP_USER_AGENT,
+            "-headers",
+            f"Referer: {parsed_source.scheme}://{parsed_source.netloc}/\r\n",
+        ]
+    args += ["-i", input_source, "-c:v", "libx264", "-preset", config.preset]
 
     if config.resolution in RESOLUTION_SCALE and RESOLUTION_SCALE[config.resolution]:
         args += ["-vf", f"scale={RESOLUTION_SCALE[config.resolution]}"]

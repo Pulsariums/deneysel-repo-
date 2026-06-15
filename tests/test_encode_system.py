@@ -20,6 +20,23 @@ class EncodeSystemTests(unittest.TestCase):
         self.assertIn("2", pass2)
         self.assertEqual(pass2[-1], "out.mp4")
 
+    def test_remote_http_input_adds_headers(self):
+        cfg = EncodeConfig(
+            input_source="https://example.com/video.mp4",
+            output_file="out.mp4",
+            duration_minutes=20,
+        )
+        cmd = build_ffmpeg_command(cfg)
+        self.assertIn("-user_agent", cmd)
+        self.assertIn("-headers", cmd)
+        self.assertIn("Referer: https://example.com/\r\n", cmd)
+
+    def test_local_input_does_not_add_http_headers(self):
+        cfg = EncodeConfig(input_source="/tmp/video.mp4", output_file="out.mp4", duration_minutes=20)
+        cmd = build_ffmpeg_command(cfg)
+        self.assertNotIn("-user_agent", cmd)
+        self.assertNotIn("-headers", cmd)
+
     def test_expected_size_positive(self):
         size = expected_size_mb(20, "crf", 4, 128, 23)
         self.assertGreater(size, 0)

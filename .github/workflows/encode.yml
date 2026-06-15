@@ -1,0 +1,71 @@
+name: Encode
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_name:
+        description: "Input name or file label"
+        required: true
+        default: "video.mp4"
+      output_format:
+        description: "Output format"
+        required: true
+        default: "mp4"
+        type: choice
+        options:
+          - mp4
+          - mkv
+          - mov
+          - webm
+      quality:
+        description: "Quality profile"
+        required: true
+        default: "medium"
+        type: choice
+        options:
+          - low
+          - medium
+          - high
+      preset:
+        description: "Encoder preset"
+        required: true
+        default: "fast"
+        type: choice
+        options:
+          - ultrafast
+          - fast
+          - medium
+          - slow
+      dry_run:
+        description: "Only print settings"
+        required: true
+        default: true
+        type: boolean
+      notes:
+        description: "Optional notes"
+        required: false
+        default: ""
+
+jobs:
+  encode:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show selected options
+        run: |
+          echo "Encode requested with:"
+          echo "input_name=${{ inputs.input_name }}"
+          echo "output_format=${{ inputs.output_format }}"
+          echo "quality=${{ inputs.quality }}"
+          echo "preset=${{ inputs.preset }}"
+          echo "dry_run=${{ inputs.dry_run }}"
+          echo "notes=${{ inputs.notes }}"
+
+      - name: Run encode
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          echo "Encoding started..."
+          echo "Simulated encode complete: ${{ inputs.input_name }} -> output.${{ inputs.output_format }}"
+
+      - name: Dry run completed
+        if: ${{ inputs.dry_run == true }}
+        run: echo "Dry run selected. No actual encode command was executed."

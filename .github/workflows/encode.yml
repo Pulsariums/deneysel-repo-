@@ -1,0 +1,196 @@
+name: Encode
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_source:
+        description: "Video linki veya dosya yolu"
+        required: true
+        type: string
+      output_file:
+        description: "Çıktı dosya adı"
+        required: true
+        default: "encoded.mp4"
+        type: string
+      duration_minutes:
+        description: "Süre (dakika)"
+        required: true
+        default: "20"
+        type: string
+      runner_type:
+        description: "Runner tipi"
+        required: true
+        default: "public"
+        type: choice
+        options:
+          - public
+          - private
+      preset:
+        description: "x264 preset"
+        required: true
+        default: "medium"
+        type: choice
+        options:
+          - veryfast
+          - fast
+          - medium
+          - slow
+      resolution:
+        description: "Çözünürlük"
+        required: true
+        default: "1080p"
+        type: choice
+        options:
+          - source
+          - 1080p
+          - 720p
+          - 480p
+      mode:
+        description: "Encode modu"
+        required: true
+        default: "crf"
+        type: choice
+        options:
+          - crf
+          - crf_cap
+          - two_pass
+      crf:
+        description: "CRF"
+        required: true
+        default: "23"
+        type: string
+      maxrate_mbps:
+        description: "Maxrate Mbps"
+        required: true
+        default: "5"
+        type: string
+      target_video_bitrate_mbps:
+        description: "Target video Mbps"
+        required: true
+        default: "4"
+        type: string
+      audio_bitrate_k:
+        description: "Audio kbps"
+        required: true
+        default: "128"
+        type: string
+      custom_extra_args:
+        description: "Ek ffmpeg argümanları"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  encode:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Ensure ffmpeg
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+
+      - name: Encode video
+        env:
+          INPUT_SOURCE: ${{ github.event.inputs.input_source }}
+          OUTPUT_FILE: ${{ github.event.inputs.output_file }}
+          DURATION_MINUTES: ${{ github.event.inputs.duration_minutes }}
+          RUNNER_TYPE: ${{ github.event.inputs.runner_type }}
+          PRESET: ${{ github.event.inputs.preset }}
+          RESOLUTION: ${{ github.event.inputs.resolution }}
+          MODE: ${{ github.event.inputs.mode }}
+          CRF: ${{ github.event.inputs.crf }}
+          MAXRATE_MBPS: ${{ github.event.inputs.maxrate_mbps }}
+          TARGET_VIDEO_MBPS: ${{ github.event.inputs.target_video_bitrate_mbps }}
+          AUDIO_BITRATE_K: ${{ github.event.inputs.audio_bitrate_k }}
+          CUSTOM_EXTRA_ARGS: ${{ github.event.inputs.custom_extra_args }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+          from encode_system import EncodeConfig, build_ffmpeg_command, estimate_encode_minutes, expected_size_mb, safe_output_name
+
+          out_dir = Path("outputs")
+          out_dir.mkdir(exist_ok=True)
+
+          output_name = safe_output_name(os.environ["OUTPUT_FILE"])
+          output_path = out_dir / output_name
+
+          duration_minutes = float(os.environ["DURATION_MINUTES"])
+          mode = os.environ["MODE"]
+          runner_type = os.environ["RUNNER_TYPE"]
+          preset = os.environ["PRESET"]
+
+          config = EncodeConfig(
+              input_source=os.environ["INPUT_SOURCE"],
+              output_file=str(output_path),
+              duration_minutes=duration_minutes,
+              runner_type=runner_type,
+              preset=preset,
+              resolution=os.environ["RESOLUTION"],
+              mode=mode,
+              crf=int(os.environ["CRF"]),
+              maxrate_mbps=float(os.environ["MAXRATE_MBPS"]),
+              audio_bitrate_k=int(os.environ["AUDIO_BITRATE_K"]),
+              target_video_bitrate_mbps=float(os.environ["TARGET_VIDEO_MBPS"]),
+              custom_extra_args=os.environ.get("CUSTOM_EXTRA_ARGS", ""),
+          )
+
+          eta = estimate_encode_minutes(duration_minutes, runner_type, preset)
+          expected_mb = expected_size_mb(
+              duration_minutes,
+              mode,
+              config.target_video_bitrate_mbps,
+              config.audio_bitrate_k,
+              config.crf,
+          )
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## Encode Plan\n")
+              summary.write(f"- Input: `{config.input_source}`\n")
+              summary.write(f"- Resolution: `{config.resolution}`\n")
+              summary.write(f"- Mode: `{config.mode}`\n")
+              summary.write(f"- Estimated encode time (min): `{eta}`\n")
+              summary.write(f"- Estimated output size (MB): `{expected_mb}`\n")
+
+          cmd1 = build_ffmpeg_command(config, pass_no=1)
+          if config.mode == "two_pass":
+              cmd2 = build_ffmpeg_command(config, pass_no=2)
+              subprocess.run(cmd1, check=True)
+              subprocess.run(cmd2, check=True)
+          else:
+              subprocess.run(cmd1, check=True)
+
+          metadata = {
+              "input_source": config.input_source,
+              "output_file": str(output_path),
+              "resolution": config.resolution,
+              "mode": config.mode,
+              "estimated_encode_minutes": eta,
+              "expected_output_mb": expected_mb,
+          }
+          (out_dir / "encode-metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+          PY
+
+      - name: Upload encoded output
+        uses: actions/upload-artifact@v4
+        with:
+          name: encode-output-${{ github.run_id }}
+          path: |
+            outputs/*.mp4
+            outputs/encode-metadata.json
+          if-no-files-found: error

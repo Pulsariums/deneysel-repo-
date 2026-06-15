@@ -97,7 +97,7 @@ HTML_PAGE = """<!doctype html>
 
 def to_config(data: dict) -> EncodeConfig:
     requested_name = safe_output_name(data.get("output_file", "encoded.mp4"))
-    out_name = f"{uuid.uuid4().hex[:12]}-{requested_name}"
+    out_name = f"{uuid.uuid4().hex}-{requested_name}"
     return EncodeConfig(
         input_source=str(data.get("input_source", "")).strip(),
         output_file=out_name,
@@ -135,7 +135,8 @@ def run_job(job_id: str, config: EncodeConfig) -> None:
             if cmd2 is not None:
                 jobs[job_id]["command_pass_2"] = cmd2
         if config.mode == "two_pass":
-            assert cmd2 is not None
+            if cmd2 is None:
+                raise ValueError("second pass command missing")
             subprocess.run(cmd1, check=True)
             subprocess.run(cmd2, check=True)
         else:

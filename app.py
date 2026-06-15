@@ -131,7 +131,9 @@ def run_job(job_id: str, config: EncodeConfig) -> None:
         cmd1 = build_ffmpeg_command(config, pass_no=1)
         cmd2 = build_ffmpeg_command(config, pass_no=2) if config.mode == "two_pass" else None
         with jobs_lock:
-            jobs[job_id]["command"] = " ".join(cmd1 if cmd2 is None else (cmd1 + ["&&"] + cmd2))
+            jobs[job_id]["command_pass_1"] = cmd1
+            if cmd2 is not None:
+                jobs[job_id]["command_pass_2"] = cmd2
         if config.mode == "two_pass":
             assert cmd2 is not None
             subprocess.run(cmd1, check=True)

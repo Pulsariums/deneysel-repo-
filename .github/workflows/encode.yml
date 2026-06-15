@@ -46,6 +46,8 @@ on:
         required: false
         default: ""
 
+permissions: {}
+
 jobs:
   encode:
     runs-on: ubuntu-latest

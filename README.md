@@ -25,3 +25,5 @@ python -m unittest discover -s tests -v
 
 ## GitHub Actions
 Testler `.github/workflows/tests.yml` ile `push` ve `pull_request` olaylarında GitHub üzerinde otomatik çalışır.
+
+Manuel encode için `.github/workflows/encode.yml` workflow'u **Actions > Encode > Run workflow** üzerinden ayar girilerek çalıştırılabilir.

@@ -96,7 +96,7 @@ HTML_PAGE = """<!doctype html>
 
 
 def to_config(data: dict) -> EncodeConfig:
-    out_name = safe_output_name(data.get("output_file", "encoded.mp4"))
+    out_name = f"encoded-{uuid.uuid4().hex}.mp4"
     return EncodeConfig(
         input_source=str(data.get("input_source", "")).strip(),
         output_file=out_name,
@@ -138,8 +138,9 @@ def run_job(job_id: str, config: EncodeConfig) -> None:
             subprocess.run(cmd1, check=True)
         with jobs_lock:
             jobs[job_id]["status"] = "completed"
-            jobs[job_id]["download_url"] = f"/outputs/{target_output.name}"
-            jobs[job_id]["preview_url"] = f"/outputs/{target_output.name}"
+            jobs[job_id]["download_url"] = f"/api/output/{job_id}"
+            jobs[job_id]["preview_url"] = f"/api/output/{job_id}"
+            jobs[job_id]["output_abs"] = str(target_output)
     except (subprocess.CalledProcessError, FileNotFoundError, OSError, ValueError) as exc:
         with jobs_lock:
             jobs[job_id]["status"] = "failed"
@@ -164,22 +165,25 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if self.path.startswith("/outputs/"):
-            requested = unquote(self.path[len("/outputs/") :])
-            file_name = Path(requested).name
-            if file_name != safe_output_name(file_name) or not SAFE_OUTPUT_RE.fullmatch(file_name):
+        if self.path.startswith("/api/output/"):
+            job_id = unquote(self.path[len("/api/output/") :]).strip()
+            with jobs_lock:
+                job = jobs.get(job_id)
+            if not job or job.get("status") != "completed":
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
-            target = output_path(file_name)
-            if not target.is_file():
+            target = Path(job.get("output_abs", "")).resolve()
+            if not target.is_relative_to(OUTPUT_DIR) or not target.is_file():
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
-            content = target.read_bytes()
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "video/mp4")
-            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Content-Length", str(target.stat().st_size))
+            self.send_header("Content-Disposition", f'attachment; filename="{target.name}"')
             self.end_headers()
-            self.wfile.write(content)
+            with target.open("rb") as fh:
+                while chunk := fh.read(64 * 1024):
+                    self.wfile.write(chunk)
             return
         if self.path.startswith("/api/job/"):
             job_id = self.path.split("/")[-1]

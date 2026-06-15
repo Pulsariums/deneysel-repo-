@@ -96,7 +96,8 @@ HTML_PAGE = """<!doctype html>
 
 
 def to_config(data: dict) -> EncodeConfig:
-    out_name = f"encoded-{uuid.uuid4().hex}.mp4"
+    requested_name = safe_output_name(data.get("output_file", "encoded.mp4"))
+    out_name = f"{uuid.uuid4().hex[:12]}-{requested_name}"
     return EncodeConfig(
         input_source=str(data.get("input_source", "")).strip(),
         output_file=out_name,
@@ -132,6 +133,7 @@ def run_job(job_id: str, config: EncodeConfig) -> None:
         with jobs_lock:
             jobs[job_id]["command"] = " ".join(cmd1 if cmd2 is None else (cmd1 + ["&&"] + cmd2))
         if config.mode == "two_pass":
+            assert cmd2 is not None
             subprocess.run(cmd1, check=True)
             subprocess.run(cmd2, check=True)
         else:

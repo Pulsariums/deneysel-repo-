@@ -27,6 +27,7 @@ class EncodeSystemTests(unittest.TestCase):
     def test_safe_output_name(self):
         self.assertEqual(safe_output_name("../../bad?.mp4"), "bad.mp4")
         self.assertEqual(safe_output_name(""), "encoded.mp4")
+        self.assertEqual(safe_output_name("..hidden..name..mp4"), "hidden.name.mp4")
 
     def test_output_path_stays_in_outputs(self):
         target = output_path("../../bad?.mp4")

@@ -115,6 +115,8 @@ def safe_output_name(raw_name: str) -> str:
     base_name = Path(raw_name).name
     cleaned = "".join(ch for ch in base_name if ch.isalnum() or ch in ("-", "_", "."))
     cleaned = cleaned.lstrip(".")
+    while ".." in cleaned:
+        cleaned = cleaned.replace("..", ".")
     if not cleaned:
         cleaned = f"encoded{DEFAULT_EXTENSION}"
     if not cleaned.lower().endswith(DEFAULT_EXTENSION):

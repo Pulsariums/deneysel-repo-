@@ -63,11 +63,11 @@ jobs:
           echo "notes=${{ inputs.notes }}"
 
       - name: Run encode
-        if: inputs.dry_run == false
+        if: ${{ !inputs.dry_run }}
         run: |
           echo "Encoding started..."
           echo "Simulated encode complete: ${{ inputs.input_name }} -> output.${{ inputs.output_format }}"
 
       - name: Dry run completed
-        if: inputs.dry_run == true
+        if: ${{ inputs.dry_run }}
         run: echo "Dry run selected. No actual encode command was executed."
